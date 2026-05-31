@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: face-swapper-config
+  namespace: face-swapper
+data:
+  INTRA_OP_THREADS: "2"     # matches deployment cpu limit of 2 to avoid CFS throttling
+  INTER_OP_THREADS: "1"
+  DET_SIZE: "640"           # SCRFD training resolution; larger values miss faces
+  MAX_DETECT_WIDTH: "2000"  # less pre-detection downscaling preserves face pixels
+  DET_THRESH: "0.3"         # lower than InsightFace default 0.5; printed/screenshot faces
+  STORAGE_ROOT: "/storage"

@@ -9,6 +9,7 @@ engine reads its path from the `inswapper_model_path` argument or the
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -29,9 +30,10 @@ class CPUFaceEngine:
     def __init__(
         self,
         det_size: int = 640,
-        max_detect_width: int = 1080,
+        max_detect_width: int = 2000,
         intra_op_threads: int = 4,
         inter_op_threads: int = 2,
+        det_thresh: float = 0.3,
         inswapper_model_path: str | None = None,
     ):
         self.max_detect_width = max_detect_width
@@ -43,7 +45,12 @@ class CPUFaceEngine:
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
         self.app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-        self.app.prepare(ctx_id=0, det_size=(det_size, det_size))
+        # det_size=640 matches SCRFD's training resolution; larger values
+        # (e.g. 1024) cause anchor-scale mismatch and miss faces entirely.
+        # det_thresh lowered from default 0.5 to help printed/screenshot faces.
+        self.app.prepare(
+            ctx_id=0, det_size=(det_size, det_size), det_thresh=det_thresh
+        )
 
         path = (
             inswapper_model_path
@@ -63,8 +70,8 @@ class CPUFaceEngine:
         return self._ready
 
     def extract_face(
-        self, img_bytes: bytes, pad_ratio: float = 0.15
-    ) -> tuple[bytes, dict]:
+        self, img_bytes: bytes, pad_ratio: float = 0.25
+    ) -> tuple[bytes, np.ndarray, dict]:
         if not self._ready:
             raise EngineNotReadyError("engine not ready")
 
@@ -81,23 +88,29 @@ class CPUFaceEngine:
         y2 = min(h, bbox[3] + pad_y)
 
         crop = img[y1:y2, x1:x2]
-        return _encode_jpeg(crop), {
+        return _encode_jpeg(crop), face.normed_embedding, {
             "x1": int(bbox[0]),
             "y1": int(bbox[1]),
             "x2": int(bbox[2]),
             "y2": int(bbox[3]),
         }
 
-    def swap_and_blend(self, template_bytes: bytes, face_bytes: bytes) -> bytes:
+    def swap_with_embedding(
+        self, template_bytes: bytes, source_embedding: np.ndarray
+    ) -> bytes:
         if not self._ready:
             raise EngineNotReadyError("engine not ready")
 
         template_img = _decode(template_bytes)
-        face_img = _decode(face_bytes)
+        try:
+            target_face = self._detect_largest(template_img)
+        except NoFaceDetectedError as e:
+            raise NoFaceDetectedError("no face detected in template image") from e
 
-        target_face = self._detect_largest(template_img)
-        source_face = self._detect_largest(face_img)
-
+        # inswapper only reads .normed_embedding from source_face; bbox/kps
+        # come from target_face. Synthesizing a Face-shaped object lets us
+        # skip a second detection pass on a tight crop.
+        source_face = SimpleNamespace(normed_embedding=source_embedding)
         swapped = self.swapper.get(
             template_img, target_face, source_face, paste_back=True
         )

@@ -6,6 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import numpy as np
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,9 +30,10 @@ async def lifespan(app: FastAPI):
     def _load() -> None:
         app.state.engine = CPUFaceEngine(
             det_size=int(os.environ.get("DET_SIZE", "640")),
-            max_detect_width=int(os.environ.get("MAX_DETECT_WIDTH", "1080")),
+            max_detect_width=int(os.environ.get("MAX_DETECT_WIDTH", "2000")),
             intra_op_threads=int(os.environ.get("INTRA_OP_THREADS", "4")),
             inter_op_threads=int(os.environ.get("INTER_OP_THREADS", "2")),
+            det_thresh=float(os.environ.get("DET_THRESH", "0.3")),
         )
 
     threading.Thread(target=_load, daemon=True).start()
@@ -141,9 +143,13 @@ async def extract_face(
     engine: CPUFaceEngine = Depends(get_engine),
     storage_root: Path = Depends(get_storage_root),
 ) -> ExtractResponse:
-    crop_bytes, bbox = engine.extract_face(await file.read())
+    crop_bytes, embedding, bbox = engine.extract_face(await file.read())
     face_id = new_id("face_user")
-    (storage_root / "extracted" / face_id).write_bytes(crop_bytes)
+    jpg_path = storage_root / "extracted" / face_id
+    jpg_path.write_bytes(crop_bytes)
+    # Sidecar .npy holds the recognition embedding; merge reads this so we
+    # never have to re-detect on the tight face crop.
+    np.save(jpg_path.with_suffix(".npy"), embedding)
     return ExtractResponse(
         status="success",
         extracted_face_id=face_id,
@@ -160,10 +166,14 @@ async def merge(
 ) -> MergeResponse:
     template_path = safe_resolve(storage_root, "templates", body.template_id)
     face_path = safe_resolve(storage_root, "extracted", body.extracted_face_id)
+    embedding_path = face_path.with_suffix(".npy")
+    if not embedding_path.is_file():
+        raise FileNotFoundError(f"embedding missing for {body.extracted_face_id}")
+    embedding = np.load(embedding_path)
 
     start = time.perf_counter()
-    output_bytes = engine.swap_and_blend(
-        template_path.read_bytes(), face_path.read_bytes()
+    output_bytes = engine.swap_with_embedding(
+        template_path.read_bytes(), embedding
     )
     elapsed = time.perf_counter() - start
 

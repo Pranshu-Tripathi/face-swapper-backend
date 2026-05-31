@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: face-swapper-storage
+  namespace: face-swapper
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+  # storageClassName omitted: use the cluster's default
+  # (kind: "standard", docker-desktop: "hostpath", minikube: "standard").
