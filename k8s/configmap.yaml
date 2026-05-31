@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: face-swapper-config
+  namespace: face-swapper
+data:
+  INTRA_OP_THREADS: "4"
+  INTER_OP_THREADS: "2"
+  DET_SIZE: "640"
+  MAX_DETECT_WIDTH: "1080"
+  STORAGE_ROOT: "/storage"

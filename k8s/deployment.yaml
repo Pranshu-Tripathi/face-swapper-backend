@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: face-swapper
+  namespace: face-swapper
+  labels:
+    app: face-swapper
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # PVC is RWO; avoid two pods racing for the mount
+  selector:
+    matchLabels:
+      app: face-swapper
+  template:
+    metadata:
+      labels:
+        app: face-swapper
+    spec:
+      containers:
+        - name: api
+          image: registry.example.com/face-swapper-cpu:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: face-swapper-config
+          resources:
+            requests:
+              cpu: "2"
+              memory: "2Gi"
+            limits:
+              cpu: "4"
+              memory: "4Gi"
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: face-swapper-storage

@@ -1,0 +1,46 @@
+# Prunes /storage/outputs and /storage/extracted of files older than 2 hours
+# so the PVC doesn't fill silently (architecture.md scaling/ops notes).
+#
+# NOTE on PVC access mode: the storage claim is ReadWriteOnce. Two pods can
+# co-mount an RWO PVC only when scheduled on the same node. The podAffinity
+# below co-locates this job with the API pod so the mount succeeds.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: face-swapper-cleanup
+  namespace: face-swapper
+spec:
+  schedule: "0 * * * *"        # hourly
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: face-swapper
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: cleanup
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  find /storage/outputs -type f -mmin +120 -delete || true
+                  find /storage/extracted -type f -mmin +120 -delete || true
+              volumeMounts:
+                - name: storage
+                  mountPath: /storage
+          volumes:
+            - name: storage
+              persistentVolumeClaim:
+                claimName: face-swapper-storage
