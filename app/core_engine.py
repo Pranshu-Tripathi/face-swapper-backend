@@ -70,8 +70,12 @@ class CPUFaceEngine:
         return self._ready
 
     def extract_face(
-        self, img_bytes: bytes, pad_ratio: float = 0.25
+        self, img_bytes: bytes, pad_ratio: float = 0.7
     ) -> tuple[bytes, np.ndarray, dict]:
+        # pad_ratio 0.7 widens the saved JPEG to head+shoulders so the
+        # /replace composite fills the slot like a portrait, not a passport
+        # zoom. The recognition embedding is unaffected — /merge keeps using
+        # the embedding directly.
         if not self._ready:
             raise EngineNotReadyError("engine not ready")
 
