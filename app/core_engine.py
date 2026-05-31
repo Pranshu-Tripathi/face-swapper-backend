@@ -70,8 +70,12 @@ class CPUFaceEngine:
         return self._ready
 
     def extract_face(
-        self, img_bytes: bytes, pad_ratio: float = 0.25
+        self, img_bytes: bytes, pad_ratio: float = 0.7
     ) -> tuple[bytes, np.ndarray, dict]:
+        # pad_ratio 0.7 widens the saved JPEG to head+shoulders so the
+        # auto-composite fallback in swap_or_composite fills the slot like
+        # a portrait. The recognition embedding is computed before cropping
+        # and is unaffected.
         if not self._ready:
             raise EngineNotReadyError("engine not ready")
 
@@ -291,17 +295,27 @@ def _is_human_face(
 
 
 def _seamless_blend(dst: np.ndarray, src: np.ndarray, bbox: np.ndarray) -> np.ndarray:
+    # Feathered alpha blend, NOT cv2.seamlessClone. Poisson blending rebalances
+    # the swapped face's colors to match the template's surrounding gradient,
+    # which visibly dilutes the user's identity (skin tone, lips, brow shading
+    # all drift toward the template). A straight alpha composite over the face
+    # ellipse keeps the swapper's pixels verbatim; the feather hides the seam.
     h, w = dst.shape[:2]
     x1, y1, x2, y2 = bbox.astype(int)
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(w, x2), min(h, y2)
 
-    mask = np.zeros((h, w), dtype=np.uint8)
-    # Ellipse hugs the face shape, so the seamless-clone gradient doesn't
-    # bleed onto the neck/clothing on the bbox corners.
     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-    ax = max(1, int((x2 - x1) * 0.45))
-    ay = max(1, int((y2 - y1) * 0.48))
-    cv2.ellipse(mask, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
+    ax = max(1, int((x2 - x1) * 0.5))
+    ay = max(1, int((y2 - y1) * 0.55))
 
-    return cv2.seamlessClone(src, dst, mask, (cx, cy), cv2.NORMAL_CLONE)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.ellipse(mask, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
+    feather = max(3, min(ax, ay) // 6)
+    ksize = feather * 2 + 1
+    mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
+    alpha = (mask.astype(np.float32) / 255.0)[..., None]
+
+    return (
+        src.astype(np.float32) * alpha + dst.astype(np.float32) * (1.0 - alpha)
+    ).astype(np.uint8)
