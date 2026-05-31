@@ -4,8 +4,8 @@ metadata:
   name: face-swapper-config
   namespace: face-swapper
 data:
-  INTRA_OP_THREADS: "4"
-  INTER_OP_THREADS: "2"
+  INTRA_OP_THREADS: "2"     # matches deployment cpu limit of 2 to avoid CFS throttling
+  INTER_OP_THREADS: "1"
   DET_SIZE: "640"
   MAX_DETECT_WIDTH: "1080"
   STORAGE_ROOT: "/storage"

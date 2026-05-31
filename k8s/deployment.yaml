@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: api
-          image: registry.example.com/face-swapper-cpu:0.1.0
-          imagePullPolicy: IfNotPresent
+          image: face-swapper-cpu:dev
+          imagePullPolicy: Never        # local-only: use the image loaded into the cluster
           ports:
             - containerPort: 8000
           envFrom:
@@ -28,11 +28,11 @@ spec:
                 name: face-swapper-config
           resources:
             requests:
-              cpu: "2"
-              memory: "2Gi"
+              cpu: "500m"
+              memory: "1Gi"
             limits:
-              cpu: "4"
-              memory: "4Gi"
+              cpu: "2"
+              memory: "3Gi"
           volumeMounts:
             - name: storage
               mountPath: /storage
