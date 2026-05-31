@@ -187,3 +187,30 @@ async def merge(
         retrieval_url=str(dest),
         processing_time_seconds=round(elapsed, 2),
     )
+
+
+@app.post("/api/v1/process/replace", response_model=MergeResponse)
+async def replace(
+    body: MergeRequest,
+    engine: CPUFaceEngine = Depends(get_engine),
+    storage_root: Path = Depends(get_storage_root),
+) -> MergeResponse:
+    template_path = safe_resolve(storage_root, "templates", body.template_id)
+    face_path = safe_resolve(storage_root, "extracted", body.extracted_face_id)
+
+    start = time.perf_counter()
+    output_bytes = engine.replace_in_slot(
+        template_path.read_bytes(), face_path.read_bytes()
+    )
+    elapsed = time.perf_counter() - start
+
+    output_id = new_id("replaced_out")
+    dest = storage_root / "outputs" / output_id
+    dest.write_bytes(output_bytes)
+
+    return MergeResponse(
+        status="success",
+        output_id=output_id,
+        retrieval_url=str(dest),
+        processing_time_seconds=round(elapsed, 2),
+    )
