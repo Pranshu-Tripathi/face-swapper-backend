@@ -1,0 +1,20 @@
+.git
+.gitignore
+.dockerignore
+.venv
+venv
+env
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# docs / repo metadata — not needed in the image
+*.md
+docker/
+k8s/
+
+# never want host-side state in the image
+storage/
+outputs/
