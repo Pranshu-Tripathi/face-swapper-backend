@@ -172,8 +172,8 @@ async def merge(
     embedding = np.load(embedding_path)
 
     start = time.perf_counter()
-    output_bytes = engine.swap_with_embedding(
-        template_path.read_bytes(), embedding
+    output_bytes = engine.swap_or_composite(
+        template_path.read_bytes(), embedding, face_path.read_bytes()
     )
     elapsed = time.perf_counter() - start
 
