@@ -70,8 +70,12 @@ class CPUFaceEngine:
         return self._ready
 
     def extract_face(
-        self, img_bytes: bytes, pad_ratio: float = 0.25
+        self, img_bytes: bytes, pad_ratio: float = 0.7
     ) -> tuple[bytes, np.ndarray, dict]:
+        # pad_ratio 0.7 widens the saved JPEG to head+shoulders so the
+        # /replace composite fills the slot like a portrait, not a passport
+        # zoom. The recognition embedding is unaffected — /merge keeps using
+        # the embedding directly.
         if not self._ready:
             raise EngineNotReadyError("engine not ready")
 
@@ -117,6 +121,22 @@ class CPUFaceEngine:
         blended = _seamless_blend(template_img, swapped, target_face.bbox)
         return _encode_jpeg(blended)
 
+    def replace_in_slot(
+        self, template_bytes: bytes, face_crop_bytes: bytes
+    ) -> bytes:
+        if not self._ready:
+            raise EngineNotReadyError("engine not ready")
+
+        template_img = _decode(template_bytes)
+        slot = detect_white_slot(template_img)
+        if slot is None:
+            raise NoFaceDetectedError("no user slot detected in template")
+
+        face_crop = _decode(face_crop_bytes)
+        cx, cy, r = slot
+        composited = composite_into_slot(template_img, face_crop, cx, cy, r)
+        return _encode_jpeg(composited)
+
     def _detect_largest(self, img: np.ndarray):
         h, w = img.shape[:2]
         if w > self.max_detect_width:
@@ -152,6 +172,80 @@ def _encode_jpeg(img: np.ndarray, quality: int = 95) -> bytes:
     if not ok:
         raise RuntimeError("jpeg encode failed")
     return buf.tobytes()
+
+
+def detect_white_slot(
+    img: np.ndarray,
+    min_radius_frac: float = 0.08,
+    white_threshold: int = 235,
+    circularity_min: float = 0.7,
+) -> tuple[int, int, int] | None:
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, white_threshold, 255, cv2.THRESH_BINARY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    min_radius = int(min(h, w) * min_radius_frac)
+
+    best: tuple[int, int, int] | None = None
+    best_area = 0.0
+    for c in contours:
+        (cx, cy), r = cv2.minEnclosingCircle(c)
+        if r < min_radius:
+            continue
+        area = cv2.contourArea(c)
+        circle_area = np.pi * r * r
+        if circle_area == 0 or area / circle_area < circularity_min:
+            continue
+        if area > best_area:
+            best_area = area
+            best = (int(round(cx)), int(round(cy)), int(round(r)))
+    return best
+
+
+def composite_into_slot(
+    template: np.ndarray,
+    face_crop: np.ndarray,
+    cx: int,
+    cy: int,
+    r: int,
+    feather: int = 8,
+) -> np.ndarray:
+    size = 2 * r
+    fh, fw = face_crop.shape[:2]
+    scale = size / min(fh, fw)
+    resized = cv2.resize(
+        face_crop, (int(round(fw * scale)), int(round(fh * scale)))
+    )
+    rh, rw = resized.shape[:2]
+    x0 = (rw - size) // 2
+    y0 = (rh - size) // 2
+    crop = resized[y0 : y0 + size, x0 : x0 + size]
+
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(mask, (r, r), max(1, r - feather), 255, -1)
+    ksize = 2 * feather + 1
+    mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
+    alpha = mask.astype(np.float32) / 255.0
+
+    out = template.copy()
+    th, tw = out.shape[:2]
+    x1, y1 = cx - r, cy - r
+    x2, y2 = x1 + size, y1 + size
+    sx1, sy1 = max(0, -x1), max(0, -y1)
+    dx1, dy1 = max(0, x1), max(0, y1)
+    dx2, dy2 = min(tw, x2), min(th, y2)
+    w_eff, h_eff = dx2 - dx1, dy2 - dy1
+    if w_eff <= 0 or h_eff <= 0:
+        return out
+
+    fg = crop[sy1 : sy1 + h_eff, sx1 : sx1 + w_eff].astype(np.float32)
+    bg = out[dy1:dy2, dx1:dx2].astype(np.float32)
+    a = alpha[sy1 : sy1 + h_eff, sx1 : sx1 + w_eff, None]
+    out[dy1:dy2, dx1:dx2] = (fg * a + bg * (1.0 - a)).astype(np.uint8)
+    return out
 
 
 def _seamless_blend(dst: np.ndarray, src: np.ndarray, bbox: np.ndarray) -> np.ndarray:
