@@ -60,20 +60,23 @@ From this repo root:
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:$(git rev-parse --short HEAD)"
 
 gcloud builds submit \
-  --tag "$IMAGE" \
-  --file docker/Dockerfile.cloudrun \
-  --machine-type=e2-highcpu-8 \
-  --timeout=30m \
+  --config docker/cloudbuild.cloudrun.yaml \
+  --substitutions=_IMAGE="$IMAGE" \
   .
 ```
 
+Why a `cloudbuild.yaml` instead of `--tag`: `gcloud builds submit --tag`
+always uses `./Dockerfile` and rejects `--file`. The config file at
+`docker/cloudbuild.cloudrun.yaml` points the Docker step at
+`docker/Dockerfile.cloudrun` and pins `machineType: E2_HIGHCPU_8` +
+`timeout: 1800s`. The trailing `.` is still required — it sets the build
+context root so `COPY app/` resolves.
+
 Notes:
-- `--file docker/Dockerfile.cloudrun` is the slim variant. It skips the
-  `COPY models/inswapper_128.onnx` step (~530 MB) because slot-replace
-  doesn't need the swap model. Use the default `docker/Dockerfile` only for
-  local / k8s where the legacy `/api/v1/process/merge` is exercised.
-- `--machine-type=e2-highcpu-8` speeds up the buffalo_l model download +
-  pip install. Default builder works too, just slower.
+- The slim Dockerfile skips the `COPY models/inswapper_128.onnx` step
+  (~530 MB) because slot-replace doesn't need the swap model. Use the
+  default `docker/Dockerfile` only for local / k8s where the legacy
+  `/api/v1/process/merge` is exercised.
 - The buffalo_l detection bundle (~300 MB) is still baked in — it's needed
   to crop the selfie before compositing.
 
