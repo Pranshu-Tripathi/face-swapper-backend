@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import gcs
 from app.core_engine import (
     CPUFaceEngine,
     EngineNotReadyError,
@@ -88,6 +89,20 @@ class MergeResponse(BaseModel):
     status: str
     output_id: str
     retrieval_url: str
+    processing_time_seconds: float
+
+
+class GCSMergeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    bucket: str = Field(min_length=1)
+    template_object: str = Field(min_length=1)
+    selfie_object: str = Field(min_length=1)
+    output_object: str = Field(min_length=1)
+
+
+class GCSMergeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str
     processing_time_seconds: float
 
 
@@ -214,3 +229,25 @@ async def replace(
         retrieval_url=str(dest),
         processing_time_seconds=round(elapsed, 2),
     )
+
+
+@app.post("/merge", response_model=GCSMergeResponse)
+def gcs_merge(
+    body: GCSMergeRequest,
+    engine: CPUFaceEngine = Depends(get_engine),
+) -> GCSMergeResponse:
+    # Contract called by shraddha-backend's HTTPFaceSwapper:
+    # read template + selfie from GCS, crop the selfie face, slot-composite
+    # into the template's white circle, write the result back to GCS.
+    template_bytes = gcs.read_bytes(body.bucket, body.template_object)
+    selfie_bytes = gcs.read_bytes(body.bucket, body.selfie_object)
+
+    face_crop_bytes, _embedding, _bbox = engine.extract_face(selfie_bytes)
+
+    start = time.perf_counter()
+    output_bytes = engine.replace_in_slot(template_bytes, face_crop_bytes)
+    elapsed = time.perf_counter() - start
+
+    gcs.write_bytes(body.bucket, body.output_object, output_bytes, "image/jpeg")
+
+    return GCSMergeResponse(status="ok", processing_time_seconds=round(elapsed, 2))

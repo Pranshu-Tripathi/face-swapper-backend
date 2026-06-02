@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+# Cloud Run variant — slot-replace only (the /merge endpoint).
+# Skips the ~530 MB inswapper_128.onnx weights since slot-replace doesn't
+# use the swap model. For the full image (legacy /api/v1/process/merge),
+# use ./Dockerfile instead.
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    OMP_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /
+
+COPY app/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Pre-download the buffalo_l detection bundle so cold start needs no network.
+# This is still required — /merge crops the selfie face before compositing.
+RUN python -c "from insightface.app import FaceAnalysis; \
+    FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']).prepare(ctx_id=0, det_size=(640,640))"
+
+COPY app/ /app/
+
+EXPOSE 8080
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1

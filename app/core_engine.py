@@ -8,7 +8,9 @@ engine reads its path from the `inswapper_model_path` argument or the
 
 from __future__ import annotations
 
+import logging
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
@@ -16,6 +18,8 @@ import numpy as np
 import onnxruntime as ort
 from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
+
+logger = logging.getLogger(__name__)
 
 
 class NoFaceDetectedError(ValueError):
@@ -57,11 +61,21 @@ class CPUFaceEngine:
             or os.environ.get("INSWAPPER_MODEL_PATH")
             or "/storage/models/inswapper_128.onnx"
         )
-        self.swapper = get_model(
-            path,
-            providers=["CPUExecutionProvider"],
-            session_options=opts,
-        )
+        # Swapper is optional. Slot-replace (/merge) and face extraction work
+        # without it; only swap_with_embedding (legacy /process/merge) needs it.
+        # Cloud Run images skip the ~530 MB model file to keep the image lean.
+        if Path(path).is_file():
+            self.swapper = get_model(
+                path,
+                providers=["CPUExecutionProvider"],
+                session_options=opts,
+            )
+        else:
+            self.swapper = None
+            logger.warning(
+                "inswapper model not found at %s — swap_with_embedding disabled",
+                path,
+            )
 
         self._ready = True
 
@@ -104,6 +118,10 @@ class CPUFaceEngine:
     ) -> bytes:
         if not self._ready:
             raise EngineNotReadyError("engine not ready")
+        if self.swapper is None:
+            raise EngineNotReadyError(
+                "inswapper model not loaded — set INSWAPPER_MODEL_PATH to a valid file"
+            )
 
         template_img = _decode(template_bytes)
         try:
