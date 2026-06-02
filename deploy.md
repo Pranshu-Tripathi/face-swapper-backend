@@ -9,6 +9,9 @@ It does **not** need a FUSE volume mount, public exposure, or the
 `inswapper_128.onnx` weights — the Cloud Run image uses
 `docker/Dockerfile.cloudrun` (slim, ~530 MB smaller than the local image).
 
+> For local development (full image + legacy multipart endpoints), see
+> [`local.md`](./local.md) or the `README.md`.
+
 > Most project-level setup (Artifact Registry repo, buckets, lifecycle rules,
 > `shraddha-backend`'s runtime SA) is owned by **`shraddha-backend/discuss/deploy.md`**.
 > This doc only covers what's specific to this service. Run §1, §2, §3, §4 of
@@ -203,34 +206,7 @@ curl -fsS -X POST "${URL}/merge" \
 
 Your user account needs `roles/run.invoker` on the service for that to work.
 
-## 7. Local development
-
-Use the **full** Dockerfile (not the Cloud Run one) — it includes the
-inswapper model so the legacy `/api/v1/process/merge` endpoint works:
-
-```bash
-# Place inswapper_128.onnx at ./models/inswapper_128.onnx first
-docker build -f docker/Dockerfile -t face-swapper-cpu:dev .
-docker run --rm -p 8000:8000 -v "$(pwd)/storage:/storage" face-swapper-cpu:dev
-```
-
-The legacy multipart endpoints (`/api/v1/templates`, `/api/v1/faces/extract`,
-`/api/v1/process/merge`, `/api/v1/process/replace`) exist for local testing
-and the k8s deploy path. They are **not** reachable in the Cloud Run image:
-the slim build doesn't ship the inswapper model, so `/api/v1/process/merge`
-returns 503 with "inswapper model not loaded". The other three legacy
-endpoints work but write to ephemeral container disk under `STORAGE_ROOT` —
-not useful in Cloud Run.
-
-To hit GCS locally:
-
-```bash
-gcloud auth application-default login
-gcloud auth application-default set-quota-project "$PROJECT_ID"
-# Grant your user roles/storage.objectUser on gs://${FACESWAP_BUCKET}.
-```
-
-## 8. Common gotchas
+## 7. Common gotchas
 
 - **`401 Unauthorized` from `/merge`**: caller didn't attach the ID token,
   or the audience doesn't match the service URL. `shraddha-backend`'s
@@ -252,7 +228,7 @@ gcloud auth application-default set-quota-project "$PROJECT_ID"
   Cloud Build SA. See `shraddha-backend/discuss/deploy.md` §1 — same
   fix applies here.
 
-## 9. Tear down
+## 8. Tear down
 
 ```bash
 gcloud run services delete "$SERVICE_NAME" --region="$REGION"
